@@ -18,8 +18,6 @@ class CategoricalGRUPolicy(StochasticPolicy):
 
     Args:
         env_spec (EnvSpec): Environment specification.
-        input_dim (int): Dimension of the network input.
-        output_dim (int): Dimension of the network output.
         hidden_dim (int): Hidden dimension for GRU cell.
         hidden_nonlinearity (callable): Activation function for intermediate
             dense layer(s). It should return a torch.Tensor. Set it to
@@ -86,6 +84,19 @@ class CategoricalGRUPolicy(StochasticPolicy):
         
         self._prev_actions = None
 
+        self._module = CategoricalGRUModule(
+            input_dim=self._input_dim,
+            output_dim=self._action_dim,
+            hidden_dim=self._hidden_dim,
+            hidden_nonlinearity=self._hidden_nonlinearity,
+            hidden_w_init=self._hidden_w_init,
+            hidden_b_init=self._hidden_b_init,
+            output_nonlinearity=self._output_nonlinearity,
+            output_w_init=self._output_w_init,
+            output_b_init=self._output_b_init,
+            layer_normalization=self._layer_normalization,
+        )
+
     def forward(self, observations):
         """Compute the action distributions from the observations.
 
@@ -98,19 +109,7 @@ class CategoricalGRUPolicy(StochasticPolicy):
             dict[str, torch.Tensor]: Additional agent_info, as torch Tensors.
                 Do not need to be detached, and can be on any device.
         """
-        module = CategoricalGRUModule(
-            input_dim=self._input_dim,
-            output_dim=self._action_dim,
-            hidden_dim=self._hidden_dim,
-            hidden_nonlinearity=self._hidden_nonlinearity,
-            hidden_w_init=self._hidden_w_init,
-            hidden_b_init=self._hidden_b_init,
-            output_nonlinearity=self._output_nonlinearity,
-            output_w_init=self._output_w_init,
-            output_b_init=self._output_b_init,
-            layer_normalization=self._layer_normalization,
-        )
-        dist = module(observations)
+        dist = self._module(observations)
         return dist, {}
 
     def reset(self, do_resets=None):
@@ -153,7 +152,12 @@ class CategoricalGRUPolicy(StochasticPolicy):
                                        axis=-1)
         else:
             all_input = observations
-        return super().get_actions(all_input)
+        prev_actions = self._prev_actions
+        actions, agent_info = super().get_actions(all_input)
+        self._prev_actions = self.action_space.flatten_n([a.item() for a in actions])
+        if self._state_include_action:
+            agent_info['prev_action'] = np.copy(prev_actions)
+        return actions, agent_info
     
     @property
     def input_dim(self):

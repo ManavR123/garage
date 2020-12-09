@@ -3,9 +3,10 @@ import copy
 
 import torch
 from torch import nn
+from torch.autograd import Variable
 
 from garage.experiment import deterministic
-from garage.torch import flatten_to_single_vector, NonLinearity
+from garage.torch import global_device, NonLinearity
 
 
 # pytorch v1.6 issue, see https://github.com/pytorch/pytorch/issues/42305
@@ -40,15 +41,15 @@ class GRUModule(nn.Module):
     ):
         super().__init__()
         self._layers = nn.Sequential()
+        self.hidden_dim = hidden_dim
+        self._gru_cell = nn.GRUCell(input_dim, hidden_dim)
+        hidden_w_init(self._gru_cell.weight_ih)
+        hidden_w_init(self._gru_cell.weight_hh)
+        hidden_b_init(self._gru_cell.bias_ih)
+        hidden_b_init(self._gru_cell.bias_hh)
+        self.hidden_nonlinearity = NonLinearity(hidden_nonlinearity)
 
-        gru_layer = nn.GRUCell(input_dim, hidden_dim)
-        hidden_w_init(gru_layer.weight_ih)
-        hidden_w_init(gru_layer.weight_hh)
-        hidden_b_init(gru_layer.bias_ih)
-        hidden_b_init(gru_layer.bias_hh)
-        self._layers.add_module("gru", gru_layer)
-        self._layers.add_module("hidden_activation", NonLinearity(hidden_nonlinearity))
-
+        self._layers.add_module("activation", self.hidden_nonlinearity)
         if layer_normalization:
             self._layers.add_module("layer_normalization", nn.LayerNorm(hidden_dim))
 
@@ -63,4 +64,16 @@ class GRUModule(nn.Module):
             torch.Tensor: Output values with (N, *, hidden_dim) shape.
 
         """
-        return self._layers(input_val)
+        if len(input_val.size()) == 2:
+            input_val = input_val.unsqueeze(0)
+        h0 = Variable(
+            torch.zeros(input_val.size(0), self.hidden_dim)).to(global_device())
+        outs = []
+        hn = h0
+        for seq in range(input_val.size(1)):
+            hn = self._gru_cell(input_val[:, seq, :], hn)
+            outs.append(hn)
+        out = outs[-1].squeeze()
+        out = self._layers(out)
+        outs = torch.stack(outs)
+        return out

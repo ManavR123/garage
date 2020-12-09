@@ -9,7 +9,7 @@ from torch import nn
 from torch.distributions import Categorical
 
 from garage.torch.modules.gru_module import GRUModule
-
+from garage.torch import global_device
 
 class CategoricalGRUModule(nn.Module):
     """Categorical GRU Model.
@@ -89,5 +89,5 @@ class CategoricalGRUModule(nn.Module):
         assert len(inputs) == 1
         gru_output = self._gru_module(inputs[0])
         fc_output = self._linear_layer(gru_output)
-        dist = Categorical(logits=fc_output)
+        dist = Categorical(logits=fc_output.unsqueeze(0))
         return dist
